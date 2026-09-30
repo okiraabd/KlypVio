@@ -1,10 +1,10 @@
 {
   "name": "klypvio",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "packageManager": "pnpm@10.17.1",
   "scripts": {
-    "dev": "pnpm --parallel --filter @klypvio/web --filter @klypvio/api dev",
+    "dev": "pnpm --parallel --filter @klypvio/web --filter @klypvio/api --filter @klypvio/worker dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint"

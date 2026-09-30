@@ -1,5 +1,7 @@
-import { StrictMode } from "react";
+import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import type { PipelineRun, Project } from "@klypvio/shared";
+import { api } from "./api";
 import "./styles.css";
 
 const nav = [
@@ -9,116 +11,98 @@ const nav = [
   { label: "Settings", icon: "⚙" }
 ];
 
-const clips = [
-  { title: "The strongest hook is usually the first sentence", time: "00:42 — 01:18", score: "92", status: "Hot" },
-  { title: "A simple editing change can double retention", time: "04:12 — 04:48", score: "88", status: "Ready" },
-  { title: "How to structure a short-form story", time: "08:05 — 08:51", score: "84", status: "Ready" }
-];
-
 function App() {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [source, setSource] = useState("");
+  const [run, setRun] = useState<PipelineRun | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.listProjects().then(setProjects).catch(() => setProjects([]));
+  }, []);
+
+  useEffect(() => {
+    if (!run || run.status === "completed" || run.status === "failed" || run.status === "cancelled") return;
+    const timer = window.setInterval(() => {
+      api.getPipeline(run.id).then(setRun).catch(() => undefined);
+    }, 1200);
+    return () => window.clearInterval(timer);
+  }, [run]);
+
+  const pipelineLabel = useMemo(() => {
+    if (!run) return "Idle";
+    if (run.status === "queued") return "Queued";
+    if (run.status === "running") return `${run.progress}% running`;
+    return run.status[0].toUpperCase() + run.status.slice(1);
+  }, [run]);
+
+  async function analyzeSource() {
+    const input = source.trim();
+    if (!input || busy) return;
+    setBusy(true);
+    setError(null);
+
+    try {
+      const project = await api.createProject(`Project ${new Date().toLocaleString()}`);
+      setProjects((items) => [project, ...items]);
+      const createdSource = await api.createSource(project.id, input);
+      const started = await api.startPipeline(project.id, createdSource.id);
+      setRun(started);
+      setSource("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "REQUEST_FAILED");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">K</div>
-          <div>
-            <div className="brand-name">KlypVio</div>
-            <div className="brand-subtitle">AI video repurposing</div>
-          </div>
+          <div><div className="brand-name">KlypVio</div><div className="brand-subtitle">AI video repurposing</div></div>
         </div>
-
         <nav className="nav">
-          {nav.map((item, index) => (
-            <button className={index === 0 ? "nav-item active" : "nav-item"} key={item.label}>
-              <span>{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
+          {nav.map((item, index) => <button className={index === 0 ? "nav-item active" : "nav-item"} key={item.label}><span>{item.icon}</span>{item.label}</button>)}
         </nav>
-
         <div className="sidebar-footer">
-          <div className="usage-label">Render usage</div>
-          <div className="usage-bar"><span /></div>
-          <div className="usage-meta">12 / 60 minutes</div>
+          <div className="usage-label">Projects</div>
+          <div className="usage-meta">{projects.length} created in this workspace</div>
         </div>
       </aside>
 
       <main className="main">
         <header className="topbar">
-          <div>
-            <div className="eyebrow">WORKSPACE</div>
-            <h1>Turn long videos into shorts.</h1>
-            <p>Analyze a source, discover clips, edit, and render from one workflow.</p>
-          </div>
-          <button className="profile">OA</button>
+          <div><div className="eyebrow">WORKSPACE</div><h1>Turn long videos into shorts.</h1><p>Analyze a source, discover clips, edit, and render from one workflow.</p></div>
+          <button className="profile">KV</button>
         </header>
 
         <section className="source-card">
-          <div>
-            <div className="section-kicker">NEW PROJECT</div>
-            <h2>Add a video source</h2>
-            <p>Paste a YouTube URL or upload a local source. Processing will run as a background job.</p>
-          </div>
+          <div><div className="section-kicker">NEW PROJECT</div><h2>Add a video source</h2><p>Paste a YouTube URL or a supported source. Processing runs as a background job.</p></div>
           <div className="source-actions">
-            <input aria-label="Video URL" placeholder="https://youtube.com/watch?v=..." />
-            <button className="primary">Analyze source</button>
+            <input aria-label="Video URL" value={source} onChange={(event) => setSource(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void analyzeSource(); }} placeholder="https://youtube.com/watch?v=..." />
+            <button className="primary" disabled={busy || !source.trim()} onClick={() => void analyzeSource()}>{busy ? "Starting…" : "Analyze source"}</button>
           </div>
+          {error && <div className="notice error">{error}</div>}
         </section>
 
         <section className="pipeline">
-          <div className="section-header">
-            <div>
-              <div className="section-kicker">PIPELINE</div>
-              <h2>Latest run</h2>
-            </div>
-            <span className="status-pill">Idle</span>
-          </div>
+          <div className="section-header"><div><div className="section-kicker">PIPELINE</div><h2>Latest run</h2></div><span className="status-pill">{pipelineLabel}</span></div>
           <div className="steps">
-            {["Source", "Transcript", "AI analysis", "Clips", "Render"].map((step, i) => (
-              <div className={i === 0 ? "step current" : "step"} key={step}>
-                <span className="step-dot">{i + 1}</span>
-                <span>{step}</span>
-              </div>
-            ))}
+            {["Source", "Transcript", "AI analysis", "Clips", "Render"].map((step, i) => <div className={i === 0 ? "step current" : "step"} key={step}><span className="step-dot">{i + 1}</span><span>{step}</span></div>)}
           </div>
+          {run && <div className="run-detail"><span>Job {run.id}</span><strong>{run.progress}%</strong></div>}
         </section>
 
         <section className="clips">
-          <div className="section-header">
-            <div>
-              <div className="section-kicker">CLIP DISCOVERY</div>
-              <h2>Suggested clips</h2>
-            </div>
-            <button className="ghost">View all</button>
-          </div>
-
-          <div className="clip-grid">
-            {clips.map((clip) => (
-              <article className="clip-card" key={clip.title}>
-                <div className="clip-preview">
-                  <div className="play">▶</div>
-                  <span className="clip-duration">{clip.time.split(" — ")[1]}</span>
-                </div>
-                <div className="clip-body">
-                  <div className="clip-meta">
-                    <span>{clip.status}</span>
-                    <strong>{clip.score}</strong>
-                  </div>
-                  <h3>{clip.title}</h3>
-                  <p>{clip.time}</p>
-                  <button className="edit-button">Open editor</button>
-                </div>
-              </article>
-            ))}
-          </div>
+          <div className="section-header"><div><div className="section-kicker">CLIP DISCOVERY</div><h2>Suggested clips</h2></div><button className="ghost">View all</button></div>
+          <div className="empty-card"><div className="empty-title">No clips yet</div><p>Clip detection will populate this area once the acquisition, transcription, and AI stages are connected.</p></div>
         </section>
       </main>
     </div>
   );
 }
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-);
+createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
